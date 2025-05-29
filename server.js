@@ -1,12 +1,13 @@
-require('dotenv').config();
 const express = require('express');
-const axios = require('axios');
+const bodyParser = require('body-parser');
 const JSZip = require('jszip');
+const axios = require('axios');
 const { embedMetadataToBase64 } = require('./metadata-utils');
-const fs = require('fs');
-const app = express();
+const { Dropbox } = require('dropbox');
+require('dotenv').config();
 
-app.use(express.json({ limit: '50mb' }));
+const app = express();
+app.use(bodyParser.json({ limit: '50mb' }));
 
 app.post('/export', async (req, res) => {
   const { project_id, photos } = req.body;
@@ -19,62 +20,51 @@ app.post('/export', async (req, res) => {
     const zip = new JSZip();
 
     for (const photo of photos) {
-      const { public_url, ai_description, Folder, created_date } = photo;
-      const response = await axios.get(public_url, { responseType: 'arraybuffer' });
-      const imageBase64 = Buffer.from(response.data, 'binary').toString('base64');
-      const base64WithExif = embedMetadataToBase64("data:image/jpeg;base64," + imageBase64, {
-        description: ai_description,
-        folder: Folder,
-        projectId: project_id,
-        createdDate: created_date
-      });
+  const { public_url, ai_description, Folder, created_date } = photo;
 
-      const cleanBase64 = base64WithExif.split(',')[1];
-      const filename = `${Folder || 'photo'}-${created_date}.jpg`;
-      zip.file(filename, cleanBase64, { base64: true });
-    }
+  if (!public_url || !public_url.startsWith('http')) {
+    console.error('❌ Skipping photo due to invalid URL:', JSON.stringify(photo, null, 2));
+    continue;
+  }
 
-    const zipBuffer = await zip.generateAsync({ type: "nodebuffer" });
+  const response = await axios.get(public_url, { responseType: 'arraybuffer' });
 
-    const dropboxResponse = await axios.post(
-      "https://content.dropboxapi.com/2/files/upload",
-      zipBuffer,
-      {
-        headers: {
-          "Authorization": `Bearer ${process.env.DROPBOX_TOKEN}`,
-          "Content-Type": "application/octet-stream",
-          "Dropbox-API-Arg": JSON.stringify({
-            path: `/Adjustly Exports/${project_id}.zip`,
-            mode: "overwrite",
-            autorename: false,
-            mute: false
-          })
-        }
-      }
-    );
+  const imageBase64 = Buffer.from(response.data, 'binary').toString('base64');
+  const base64WithExif = embedMetadataToBase64("data:image/jpeg;base64," + imageBase64, {
+    description: ai_description,
+    folder: Folder,
+    projectId: project_id,
+    createdDate: created_date
+  });
 
-    const linkRes = await axios.post(
-      "https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings",
-      {
-        path: dropboxResponse.data.path_lower,
-        settings: { requested_visibility: "public" }
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.DROPBOX_TOKEN}`,
-          "Content-Type": "application/json"
-        }
-      }
-    );
+  const cleanBase64 = base64WithExif.split(',')[1];
+  const filename = `${Folder || 'photo'}-${created_date}.jpg`;
 
-    res.json({ success: true, url: linkRes.data.url.replace('?dl=0', '?dl=1') });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to export photos.' });
+  zip.file(filename, cleanBase64, { base64: true });
+}
+
+
+    const zipContent = await zip.generateAsync({ type: 'nodebuffer' });
+
+    const dbx = new Dropbox({ accessToken: process.env.DROPBOX_ACCESS_TOKEN });
+    const dropboxPath = `/Adjustly Exports/${project_id}-${Date.now()}.zip`;
+
+    await dbx.filesUpload({
+      path: dropboxPath,
+      contents: zipContent,
+      mode: { '.tag': 'overwrite' }
+    });
+
+    const sharedLink = await dbx.sharingCreateSharedLinkWithSettings({ path: dropboxPath });
+
+    return res.json({ url: sharedLink.result.url.replace('?dl=0', '?dl=1') }); // force download
+  } catch (error) {
+    console.error('Export failed:', error);
+    return res.status(500).json({ error: 'Failed to export photos.' });
   }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`Export server running on port ${PORT}`);
 });
