@@ -5,7 +5,7 @@
 "scripts": {
   "start": "node --max-old-space-size=512 server.js"
 }
-  },
+  }
   "dependencies": {
     "axios": "^1.6.7",
     "dotenv": "^16.3.1",
