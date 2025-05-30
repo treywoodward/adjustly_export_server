@@ -3,7 +3,7 @@ const piexif = require("piexifjs");
 function embedMetadataToBase64(base64, metadata) {
   const exifObj = {
     "0th": {
-      [piexif.ImageIFD.ImageDescription]: metadata.description,
+      [piexif.ImageIFD.ImageDescription]: metadata.aidescription,
       [piexif.ImageIFD.DocumentName]: metadata.folder,
       [piexif.ImageIFD.Make]: metadata.projectId,
       [piexif.ImageIFD.Software]: "Adjustly"

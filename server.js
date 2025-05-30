@@ -38,9 +38,11 @@ app.post('/export', async (req, res) => {
   });
 
   const cleanBase64 = base64WithExif.split(',')[1];
-  const filename = `${Folder || 'photo'}-${created_date}.jpg`;
+  const safeName = photo.label?.replace(/[<>:"/\\|?*]+/g, '-').trim() || `Photo-${index}`;
+  const fileName = `${safeName}.jpg`;
 
-  zip.file(filename, cleanBase64, { base64: true });
+
+  zip.file(fileName, cleanBase64, { base64: true });
 }
 
 
