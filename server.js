@@ -18,33 +18,34 @@ app.post('/export', async (req, res) => {
 
   try {
     const zip = new JSZip();
+    let index = 1;
 
     for (const photo of photos) {
-  const { public_url, ai_description, Folder, created_date } = photo;
+      const { public_url, ai_description, Folder, created_date } = photo;
 
-  if (!public_url || !public_url.startsWith('http')) {
-    console.error('❌ Skipping photo due to invalid URL:', JSON.stringify(photo, null, 2));
-    continue;
-  }
+      if (!public_url || !public_url.startsWith('http')) {
+        console.error('❌ Skipping photo due to invalid URL:', JSON.stringify(photo, null, 2));
+        index++;
+        continue;
+      }
 
-  const response = await axios.get(public_url, { responseType: 'arraybuffer' });
+      const response = await axios.get(public_url, { responseType: 'arraybuffer' });
 
-  const imageBase64 = Buffer.from(response.data, 'binary').toString('base64');
-  const base64WithExif = embedMetadataToBase64("data:image/jpeg;base64," + imageBase64, {
-    description: ai_description,
-    folder: Folder,
-    projectId: project_id,
-    createdDate: created_date
-  });
+      const imageBase64 = Buffer.from(response.data, 'binary').toString('base64');
+      const base64WithExif = embedMetadataToBase64("data:image/jpeg;base64," + imageBase64, {
+        description: ai_description,
+        folder: Folder,
+        projectId: project_id,
+        createdDate: created_date
+      });
 
-  const cleanBase64 = base64WithExif.split(',')[1];
-  const safeName = photo.label?.replace(/[<>:"/\\|?*]+/g, '-').trim() || `Photo-${index}`;
-  const fileName = `${safeName}.jpg`;
+      const cleanBase64 = base64WithExif.split(',')[1];
+      const safeName = photo.label?.replace(/[<>:"/\\|?*]+/g, '-').trim() || `Photo-${index}`;
+      const fileName = `${safeName}.jpg`;
 
-
-  zip.file(fileName, cleanBase64, { base64: true });
-}
-
+      zip.file(fileName, cleanBase64, { base64: true });
+      index++;
+    }
 
     const zipContent = await zip.generateAsync({ type: 'nodebuffer' });
 
