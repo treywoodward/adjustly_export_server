@@ -1,4 +1,3 @@
-// server.js
 const express = require('express');
 const archiver = require('archiver');
 const { compressAndEmbedMetadata } = require('./metadata-utils');
@@ -37,6 +36,7 @@ app.post('/export', async (req, res) => {
       Key: `project-exports/${project_id}-${Date.now()}.zip`,
       Body: zipStream,
       ContentType: 'application/zip',
+      ACL: 'public-read' // 🔥 Make file publicly accessible
     };
     const s3Upload = s3.upload(uploadParams).promise();
 
