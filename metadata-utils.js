@@ -1,12 +1,14 @@
-const piexif = require('piexifjs');
-const sharp = require('sharp');
-
 function embedMetadataToBase64(base64Image, metadata) {
   try {
     const jpegData = base64Image.split(',')[1];
     const binaryStr = Buffer.from(jpegData, 'base64').toString('binary');
 
-    const exifObj = { "0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": null };
+    let exifObj;
+    try {
+      exifObj = piexif.load("data:image/jpeg;base64," + jpegData);
+    } catch {
+      exifObj = { "0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": null };
+    }
 
     if (metadata.ai_description) {
       exifObj["0th"][piexif.ImageIFD.ImageDescription] = metadata.ai_description;
@@ -32,7 +34,3 @@ function embedMetadataToBase64(base64Image, metadata) {
     throw err;
   }
 }
-
-module.exports = {
-  embedMetadataToBase64
-};
