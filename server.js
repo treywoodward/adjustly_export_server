@@ -1,73 +1,62 @@
 const express = require('express');
-const bodyParser = require('body-parser');
-const JSZip = require('jszip');
-const axios = require('axios');
-const { embedMetadataToBase64 } = require('./metadata-utils');
+const archiver = require('archiver');
+const { compressAndEmbedMetadata } = require('./metadata-utils');
 const AWS = require('aws-sdk');
+const stream = require('stream');
 require('dotenv').config();
 
 const app = express();
-app.use(bodyParser.json({ limit: '50mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true }));
 
-const s3 = new AWS.S3({
+// Configure AWS
+AWS.config.update({
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   region: process.env.AWS_REGION,
 });
+const s3 = new AWS.S3();
 
 app.post('/export', async (req, res) => {
-  const { project_id, photos } = req.body;
-
-  if (!project_id || !photos || !Array.isArray(photos)) {
-    return res.status(400).json({ error: 'Invalid payload.' });
-  }
-
   try {
-    const zip = new JSZip();
+    const { project_id, images } = req.body;
 
-    for (let index = 0; index < photos.length; index++) {
-      const photo = photos[index];
-      const { public_url, ai_description, Folder, created_date } = photo;
-
-      if (!public_url || !public_url.startsWith('http')) {
-        console.error('❌ Skipping photo due to invalid URL:', JSON.stringify(photo, null, 2));
-        continue;
-      }
-
-      const response = await axios.get(public_url, { responseType: 'arraybuffer' });
-      const imageBase64 = Buffer.from(response.data, 'binary').toString('base64');
-      const base64WithExif = embedMetadataToBase64("data:image/jpeg;base64," + imageBase64, {
-        description: ai_description,
-        folder: Folder,
-        projectId: project_id,
-        createdDate: created_date
-      });
-
-      const cleanBase64 = base64WithExif.split(',')[1];
-      const safeName = Folder?.replace(/[<>:"/\\|?*]+/g, '-').trim() || `Photo-${index + 1}`;
-      const fileName = `${safeName}.jpg`;
-
-      zip.file(fileName, cleanBase64, { base64: true });
+    if (!images || images.length === 0) {
+      return res.status(400).json({ error: 'No images provided.' });
     }
 
-    const zipContent = await zip.generateAsync({ type: 'nodebuffer' });
-    const s3Key = `exports/${project_id}-${Date.now()}.zip`;
+    // Create in-memory zip archive
+    const zipStream = new stream.PassThrough();
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    archive.pipe(zipStream);
 
-    await s3.putObject({
+    // Begin compressing and appending images
+    for (let i = 0; i < images.length; i++) {
+      const { buffer, filename } = await compressAndEmbedMetadata(images[i], i + 1);
+      archive.append(buffer, { name: filename });
+    }
+
+    // Finalize the archive
+    await archive.finalize();
+
+    // Upload after archive is complete
+    const s3Upload = await s3.upload({
       Bucket: process.env.S3_BUCKET_NAME,
-      Key: s3Key,
-      Body: zipContent,
+      Key: `project-exports/${project_id}-${Date.now()}.zip`,
+      Body: zipStream,
       ContentType: 'application/zip',
-      ACL: 'public-read',
+      ACL: 'public-read'
     }).promise();
 
-    const s3Url = `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${s3Key}`;
-    return res.json({ url: s3Url });
-  } catch (error) {
-    console.error('Export failed:', error);
-    return res.status(500).json({ error: 'Failed to export photos.' });
+    // Return public S3 link
+    res.json({ download_url: s3Upload.Location });
+  } catch (err) {
+    console.error('Export error:', err);
+    res.status(500).json({ error: 'Export failed. Check server logs.' });
   }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Export server running on port ${PORT}`);
+  console.log(`Export service running on port ${PORT}`);
 });
