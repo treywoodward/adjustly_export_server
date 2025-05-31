@@ -11,19 +11,21 @@ const compressAndEmbedMetadata = async (image, index) => {
 
   if (!public_url) throw new Error('Missing image URL');
 
+  // 1. Download image
   const response = await axios.get(public_url, { responseType: 'arraybuffer' });
   const inputBuffer = Buffer.from(response.data);
 
-  // Compress image
+  // 2. Resize and compress
   const compressedBuffer = await sharp(inputBuffer)
-    .resize({ width: 1800 })
+    .resize({ width: 1800, withoutEnlargement: true })
     .jpeg({ quality: 70 })
     .toBuffer();
 
-  // Temp file path for exiftool to edit
+  // 3. Write to temp file
   const tempFilePath = path.join(os.tmpdir(), `temp-${Date.now()}-${index}.jpg`);
   await fs.writeFile(tempFilePath, compressedBuffer);
 
+  // 4. Write metadata
   const exiftool = new ExiftoolProcess();
   await exiftool.open();
 
@@ -35,13 +37,13 @@ const compressAndEmbedMetadata = async (image, index) => {
   await exiftool.writeMetadata(tempFilePath, metadata, ['overwrite_original']);
   await exiftool.close();
 
+  // 5. Read back final file
   const finalBuffer = await fs.readFile(tempFilePath);
   await fs.unlink(tempFilePath);
 
-  const sanitizedTitle = (subfolder_title || label || `Image-${index}`)
-    .replace(/[^a-z0-9]/gi, '_')
-    .substring(0, 50);
-
+  // 6. Construct sanitized filename
+  const rawName = subfolder_title || label || `Image-${index}`;
+  const sanitizedTitle = rawName.replace(/[^a-z0-9]/gi, '_').substring(0, 50);
   const filename = `${sanitizedTitle}.jpg`;
 
   return { buffer: finalBuffer, filename };

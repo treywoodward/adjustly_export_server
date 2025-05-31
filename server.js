@@ -19,28 +19,34 @@ const s3 = new AWS.S3();
 
 app.post('/export', async (req, res) => {
   try {
-    const { project_id, images } = req.body;
+    const { project_id, project, images } = req.body;
 
     if (!images || images.length === 0) {
       return res.status(400).json({ error: 'No images provided.' });
     }
+
+    if (!project) {
+      return res.status(400).json({ error: 'Missing project name.' });
+    }
+
+    // Sanitize project name for file naming
+    const safeProjectName = project.replace(/[^a-z0-9]/gi, '_').substring(0, 50);
 
     // Create in-memory zip
     const zipStream = new stream.PassThrough();
     const archive = archiver('zip', { zlib: { level: 9 } });
     archive.pipe(zipStream);
 
-    // Start upload to S3 without ACL
+    // Prepare S3 upload
     const uploadParams = {
       Bucket: process.env.S3_BUCKET_NAME,
-      Key: `project-exports/${project_id}-${Date.now()}.zip`,
+      Key: `project-exports/${safeProjectName}.zip`,
       Body: zipStream,
       ContentType: 'application/zip',
-      // ACL: 'public-read', ❌ REMOVE this if Object Ownership is "Bucket owner enforced"
     };
     const s3Upload = s3.upload(uploadParams).promise();
 
-    // Add images to the archive
+    // Add compressed + tagged images
     for (let i = 0; i < images.length; i++) {
       const { buffer, filename } = await compressAndEmbedMetadata(images[i], i + 1);
       archive.append(buffer, { name: filename });
@@ -48,7 +54,7 @@ app.post('/export', async (req, res) => {
 
     archive.finalize();
 
-    // Wait for upload to finish
+    // Wait for S3 upload
     const s3Result = await s3Upload;
 
     res.json({ download_url: s3Result.Location });
