@@ -1,30 +1,31 @@
 const piexif = require("piexifjs");
 
 function embedMetadataToBase64(base64Image, metadata) {
-  const zeroth = {};
-  const exif = {};
+  try {
+    let exifObj = { "0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": null };
 
-  if (metadata.description) {
-    zeroth[piexif.ImageIFD.ImageDescription] = metadata.description;
+    if (metadata.description) {
+      exifObj["0th"][piexif.ImageIFD.ImageDescription] = metadata.description;
+    }
+    if (metadata.folder) {
+      exifObj["0th"][piexif.ImageIFD.DocumentName] = metadata.folder;
+    }
+    if (metadata.projectId) {
+      exifObj["0th"][piexif.ImageIFD.PageName] = metadata.projectId;
+    }
+    if (metadata.createdDate) {
+      exifObj["0th"][piexif.ImageIFD.DateTime] = metadata.createdDate;
+    }
+
+    const exifBytes = piexif.dump(exifObj);
+    const newData = piexif.insert(exifBytes, base64Image);
+    return newData;
+  } catch (error) {
+    console.error("❌ Failed to embed metadata:", error);
+    return base64Image; // return original image if embedding fails
   }
-
-  if (metadata.folder) {
-    zeroth[piexif.ImageIFD.DocumentName] = metadata.folder;
-  }
-
-  if (metadata.projectId) {
-    zeroth[piexif.ImageIFD.PageName] = metadata.projectId;
-  }
-
-  if (metadata.createdDate) {
-    zeroth[piexif.ImageIFD.DateTime] = new Date(metadata.createdDate).toISOString();
-  }
-
-  const exifObj = { "0th": zeroth, Exif: exif };
-  const exifBytes = piexif.dump(exifObj);
-  const newData = piexif.insert(exifBytes, base64Image);
-
-  return newData;
 }
 
-module.exports = { embedMetadataToBase64 };
+module.exports = {
+  embedMetadataToBase64,
+};
