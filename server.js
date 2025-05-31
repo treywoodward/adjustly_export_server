@@ -38,18 +38,26 @@ app.post('/export', async (req, res) => {
       ContentType: 'application/zip',
       ACL: 'public-read' // 🔥 Make file publicly accessible
     };
-    const s3Upload = s3.upload(uploadParams).promise();
-
-    // Add each image to the archive
+        // Build the archive in memory
     for (let i = 0; i < images.length; i++) {
       const { buffer, filename } = await compressAndEmbedMetadata(images[i], i + 1);
       archive.append(buffer, { name: filename });
     }
 
-    archive.finalize();
+    // Finalize the archive BEFORE starting S3 upload
+    await archive.finalize();
 
-    // Wait for S3 upload to finish
+    // Upload to S3 AFTER zip is finalized
+    const s3Upload = s3.upload({
+      Bucket: process.env.S3_BUCKET_NAME,
+      Key: `project-exports/${project_id}-${Date.now()}.zip`,
+      Body: zipStream,
+      ContentType: 'application/zip',
+      ACL: 'public-read'
+    }).promise();
+
     const s3Result = await s3Upload;
+
 
     // Return public link
     res.json({ download_url: s3Result.Location });
