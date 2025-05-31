@@ -18,14 +18,13 @@ app.post('/export', async (req, res) => {
 
   try {
     const zip = new JSZip();
-    let index = 1;
 
-    for (const photo of photos) {
+    for (let index = 0; index < photos.length; index++) {
+      const photo = photos[index];
       const { public_url, ai_description, Folder, created_date } = photo;
 
       if (!public_url || !public_url.startsWith('http')) {
         console.error('❌ Skipping photo due to invalid URL:', JSON.stringify(photo, null, 2));
-        index++;
         continue;
       }
 
@@ -40,11 +39,12 @@ app.post('/export', async (req, res) => {
       });
 
       const cleanBase64 = base64WithExif.split(',')[1];
-      const safeName = photo.label?.replace(/[<>:"/\\|?*]+/g, '-').trim() || `Photo-${index}`;
+
+      // Use Folder as the photo name
+      const safeName = Folder?.replace(/[<>:"/\\|?*]+/g, '-').trim() || `Photo-${index + 1}`;
       const fileName = `${safeName}.jpg`;
 
       zip.file(fileName, cleanBase64, { base64: true });
-      index++;
     }
 
     const zipContent = await zip.generateAsync({ type: 'nodebuffer' });
