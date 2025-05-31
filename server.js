@@ -1,6 +1,5 @@
 // server.js
 const express = require('express');
-const multer = require('multer');
 const archiver = require('archiver');
 const { compressAndEmbedMetadata } = require('./metadata-utils');
 const AWS = require('aws-sdk');
@@ -8,7 +7,6 @@ const stream = require('stream');
 require('dotenv').config();
 
 const app = express();
-const upload = multer();
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
 
