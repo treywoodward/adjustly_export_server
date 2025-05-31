@@ -1,40 +1,47 @@
-const piexif = require('piexifjs');
+// metadata-utils.js
 const sharp = require('sharp');
+const axios = require('axios');
+const { exiftool } = require('exiftool-vendored');
+const fs = require('fs/promises');
+const path = require('path');
+const os = require('os');
 
-function embedMetadataToBase64(base64Image, metadata) {
-  try {
-    const jpegData = base64Image.split(',')[1];
-    const binaryStr = Buffer.from(jpegData, 'base64').toString('binary');
-
-    const exifObj = { "0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": null };
-
-    if (metadata.ai_description) {
-      exifObj["0th"][piexif.ImageIFD.ImageDescription] = metadata.ai_description;
-    }
-
-    if (metadata.folder) {
-      exifObj["0th"][piexif.ImageIFD.DocumentName] = metadata.folder;
-    }
-
-    if (metadata.projectId) {
-      exifObj["0th"][piexif.ImageIFD.ImageUniqueID] = metadata.projectId;
-    }
-
-    if (metadata.createdDate) {
-      exifObj["0th"][piexif.ImageIFD.DateTime] = new Date(metadata.createdDate).toISOString();
-    }
-
-    const exifBytes = piexif.dump(exifObj);
-    const newData = piexif.insert(exifBytes, "data:image/jpeg;base64," + jpegData);
-    return newData;
-
-  } catch (err) {
-    console.error('❌ Failed to embed metadata:', err);
-    throw err;
-  }
+async function downloadImage(url) {
+  const response = await axios.get(url, { responseType: 'arraybuffer' });
+  return Buffer.from(response.data, 'binary');
 }
 
-// ✅ Export the function for use in server.js
+async function compressAndEmbedMetadata(image, index) {
+  const { public_url, ai_description, subfolder, ai_tags } = image;
+
+  const imageBuffer = await downloadImage(public_url);
+
+  // Resize image to 60% of original size
+  const resizedBuffer = await sharp(imageBuffer).resize({ width: Math.round(0.6 * 3000), withoutEnlargement: true }).toBuffer();
+
+  // Create temp file path
+  const tempFilePath = path.join(os.tmpdir(), `image-${index}.jpg`);
+  await fs.writeFile(tempFilePath, resizedBuffer);
+
+  // Embed metadata
+  await exiftool.write(tempFilePath, {
+    Title: subfolder || '',
+    Description: ai_description || '',
+    Keywords: ai_tags || '',
+  });
+
+  // Read updated image back into buffer
+  const finalBuffer = await fs.readFile(tempFilePath);
+
+  // Clean up
+  await fs.unlink(tempFilePath);
+
+  return {
+    buffer: finalBuffer,
+    filename: `${subfolder || 'image'}-${index}.jpg`,
+  };
+}
+
 module.exports = {
-  embedMetadataToBase64
+  compressAndEmbedMetadata,
 };
