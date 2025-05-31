@@ -30,17 +30,17 @@ app.post('/export', async (req, res) => {
     const archive = archiver('zip', { zlib: { level: 9 } });
     archive.pipe(zipStream);
 
-    // Prepare S3 upload
+    // Start upload to S3 without ACL
     const uploadParams = {
       Bucket: process.env.S3_BUCKET_NAME,
       Key: `project-exports/${project_id}-${Date.now()}.zip`,
       Body: zipStream,
       ContentType: 'application/zip',
-      ACL: 'public-read', // <-- This line makes the ZIP file public
+      // ACL: 'public-read', ❌ REMOVE this if Object Ownership is "Bucket owner enforced"
     };
     const s3Upload = s3.upload(uploadParams).promise();
 
-    // Add each image to the archive
+    // Add images to the archive
     for (let i = 0; i < images.length; i++) {
       const { buffer, filename } = await compressAndEmbedMetadata(images[i], i + 1);
       archive.append(buffer, { name: filename });
@@ -48,10 +48,9 @@ app.post('/export', async (req, res) => {
 
     archive.finalize();
 
-    // Wait for S3 upload to finish
+    // Wait for upload to finish
     const s3Result = await s3Upload;
 
-    // Return public link
     res.json({ download_url: s3Result.Location });
   } catch (err) {
     console.error('Export error:', err);
