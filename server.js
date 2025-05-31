@@ -25,38 +25,41 @@ app.post('/export', async (req, res) => {
       return res.status(400).json({ error: 'No images provided.' });
     }
 
-    // Create in-memory zip archive
+    // Create in-memory zip
     const zipStream = new stream.PassThrough();
     const archive = archiver('zip', { zlib: { level: 9 } });
     archive.pipe(zipStream);
 
-    // Begin compressing and appending images
+    // Prepare S3 upload
+    const uploadParams = {
+      Bucket: process.env.S3_BUCKET_NAME,
+      Key: `project-exports/${project_id}-${Date.now()}.zip`,
+      Body: zipStream,
+      ContentType: 'application/zip',
+      ACL: 'public-read', // <-- This line makes the ZIP file public
+    };
+    const s3Upload = s3.upload(uploadParams).promise();
+
+    // Add each image to the archive
     for (let i = 0; i < images.length; i++) {
       const { buffer, filename } = await compressAndEmbedMetadata(images[i], i + 1);
       archive.append(buffer, { name: filename });
     }
 
-    // Finalize the archive
-    await archive.finalize();
+    archive.finalize();
 
-    // Upload after archive is complete
-    const s3Upload = await s3.upload({
-      Bucket: process.env.S3_BUCKET_NAME,
-      Key: `project-exports/${project_id}-${Date.now()}.zip`,
-      Body: zipStream,
-      ContentType: 'application/zip',
-      ACL: 'public-read'
-    }).promise();
+    // Wait for S3 upload to finish
+    const s3Result = await s3Upload;
 
-    // Return public S3 link
-    res.json({ download_url: s3Upload.Location });
+    // Return public link
+    res.json({ download_url: s3Result.Location });
   } catch (err) {
     console.error('Export error:', err);
     res.status(500).json({ error: 'Export failed. Check server logs.' });
   }
 });
 
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Export service running on port ${PORT}`);
 });
