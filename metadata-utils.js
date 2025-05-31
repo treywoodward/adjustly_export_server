@@ -1,58 +1,40 @@
-// metadata-utils.js
+const piexif = require('piexifjs');
 const sharp = require('sharp');
-const axios = require('axios');
-const { exiftool } = require('exiftool-vendored');
-const fs = require('fs/promises');
-const path = require('path');
-const os = require('os');
 
-async function downloadImage(url) {
-  const response = await axios.get(url, { responseType: 'arraybuffer' });
-  return Buffer.from(response.data, 'binary');
-}
-
-async function compressAndEmbedMetadata(image, index) {
+function embedMetadataToBase64(base64Image, metadata) {
   try {
-    const {
-      public_url,
-      ai_description = '',
-      subfolder = `Image-${index}`,
-      ai_tags = '',
-    } = image;
+    const jpegData = base64Image.split(',')[1];
+    const binaryStr = Buffer.from(jpegData, 'base64').toString('binary');
 
-    if (!public_url) {
-      console.warn(`Image ${index} is missing a public_url.`);
-      throw new Error(`Missing public_url for image ${index}`);
+    const exifObj = { "0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": null };
+
+    if (metadata.ai_description) {
+      exifObj["0th"][piexif.ImageIFD.ImageDescription] = metadata.ai_description;
     }
 
-    const imageBuffer = await downloadImage(public_url);
+    if (metadata.folder) {
+      exifObj["0th"][piexif.ImageIFD.DocumentName] = metadata.folder;
+    }
 
-    const resizedBuffer = await sharp(imageBuffer)
-      .resize({ width: 1800, withoutEnlargement: true }) // conservative compression
-      .toBuffer();
+    if (metadata.projectId) {
+      exifObj["0th"][piexif.ImageIFD.ImageUniqueID] = metadata.projectId;
+    }
 
-    const tempFilePath = path.join(os.tmpdir(), `image-${index}.jpg`);
-    await fs.writeFile(tempFilePath, resizedBuffer);
+    if (metadata.createdDate) {
+      exifObj["0th"][piexif.ImageIFD.DateTime] = new Date(metadata.createdDate).toISOString();
+    }
 
-    await exiftool.write(tempFilePath, {
-      Title: subfolder,
-      Description: ai_description,
-      Keywords: ai_tags,
-    });
+    const exifBytes = piexif.dump(exifObj);
+    const newData = piexif.insert(exifBytes, "data:image/jpeg;base64," + jpegData);
+    return newData;
 
-    const finalBuffer = await fs.readFile(tempFilePath);
-    await fs.unlink(tempFilePath);
-
-    return {
-      buffer: finalBuffer,
-      filename: `${subfolder.replace(/[^a-zA-Z0-9_-]/g, '_')}-${index}.jpg`,
-    };
   } catch (err) {
-    console.error(`Error processing image ${index}:`, err.message);
+    console.error('❌ Failed to embed metadata:', err);
     throw err;
   }
 }
 
+// ✅ Export the function for use in server.js
 module.exports = {
-  compressAndEmbedMetadata,
+  embedMetadataToBase64
 };
