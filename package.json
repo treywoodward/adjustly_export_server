@@ -2,11 +2,11 @@
   "name": "adjustly-export-server",
   "version": "1.0.0",
   "main": "server.js",
-"scripts": {
-  "start": "node --max-old-space-size=512 server.js"
-
+  "scripts": {
+    "start": "node --max-old-space-size=512 server.js"
   },
   "dependencies": {
+    "aws-sdk": "^2.1692.0",
     "axios": "^1.6.7",
     "dotenv": "^16.3.1",
     "dropbox": "^10.34.0",
