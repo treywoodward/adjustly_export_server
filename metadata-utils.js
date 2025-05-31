@@ -12,34 +12,45 @@ async function downloadImage(url) {
 }
 
 async function compressAndEmbedMetadata(image, index) {
-  const { public_url, ai_description, subfolder, ai_tags } = image;
+  try {
+    const {
+      public_url,
+      ai_description = '',
+      subfolder = `Image-${index}`,
+      ai_tags = '',
+    } = image;
 
-  const imageBuffer = await downloadImage(public_url);
+    if (!public_url) {
+      console.warn(`Image ${index} is missing a public_url.`);
+      throw new Error(`Missing public_url for image ${index}`);
+    }
 
-  // Resize image to 60% of original size
-  const resizedBuffer = await sharp(imageBuffer).resize({ width: Math.round(0.6 * 3000), withoutEnlargement: true }).toBuffer();
+    const imageBuffer = await downloadImage(public_url);
 
-  // Create temp file path
-  const tempFilePath = path.join(os.tmpdir(), `image-${index}.jpg`);
-  await fs.writeFile(tempFilePath, resizedBuffer);
+    const resizedBuffer = await sharp(imageBuffer)
+      .resize({ width: 1800, withoutEnlargement: true }) // conservative compression
+      .toBuffer();
 
-  // Embed metadata
-  await exiftool.write(tempFilePath, {
-    Title: subfolder || '',
-    Description: ai_description || '',
-    Keywords: ai_tags || '',
-  });
+    const tempFilePath = path.join(os.tmpdir(), `image-${index}.jpg`);
+    await fs.writeFile(tempFilePath, resizedBuffer);
 
-  // Read updated image back into buffer
-  const finalBuffer = await fs.readFile(tempFilePath);
+    await exiftool.write(tempFilePath, {
+      Title: subfolder,
+      Description: ai_description,
+      Keywords: ai_tags,
+    });
 
-  // Clean up
-  await fs.unlink(tempFilePath);
+    const finalBuffer = await fs.readFile(tempFilePath);
+    await fs.unlink(tempFilePath);
 
-  return {
-    buffer: finalBuffer,
-    filename: `${subfolder || 'image'}-${index}.jpg`,
-  };
+    return {
+      buffer: finalBuffer,
+      filename: `${subfolder.replace(/[^a-zA-Z0-9_-]/g, '_')}-${index}.jpg`,
+    };
+  } catch (err) {
+    console.error(`Error processing image ${index}:`, err.message);
+    throw err;
+  }
 }
 
 module.exports = {
