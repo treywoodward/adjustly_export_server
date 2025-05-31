@@ -1,57 +1,46 @@
-// metadata-utils.js
-const sharp = require('sharp');
 const exiftool = require('node-exiftool');
-const exiftoolBin = require('dist-exiftool');
 const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
-const { v4: uuidv4 } = require('uuid');
+const sharp = require('sharp');
+const stream = require('stream');
 
-const ep = new exiftool.ExiftoolProcess(exiftoolBin);
+const { spawn } = require('child_process');
+const ep = new exiftool.ExiftoolProcess();
 
-async function compressAndEmbedMetadata(image, index) {
-  try {
-    const { public_url, ai_description, subfolder_title } = image;
+const compressAndEmbedMetadata = async (image, index) => {
+  const { public_url, label, ai_description, subfolder_title } = image;
 
-    // Download the image
-    const response = await axios.get(public_url, { responseType: 'arraybuffer' });
-    const imageBuffer = Buffer.from(response.data, 'binary');
+  // Fetch image buffer
+  const response = await axios.get(public_url, { responseType: 'arraybuffer' });
+  const inputBuffer = Buffer.from(response.data);
 
-    // Compress the image
-    const compressedBuffer = await sharp(imageBuffer)
-      .jpeg({ quality: 70 }) // adjust quality as needed
-      .toBuffer();
+  // Compress image
+  const compressedBuffer = await sharp(inputBuffer)
+    .resize({ width: 1800, withoutEnlargement: true })
+    .jpeg({ quality: 80 })
+    .toBuffer();
 
-    // Create a temporary file
-    const tempFilename = `temp-${uuidv4()}.jpg`;
-    const tempPath = path.join(__dirname, tempFilename);
-    fs.writeFileSync(tempPath, compressedBuffer);
+  // Write metadata tags
+  const metadataTags = {
+    Title: subfolder_title || label || `Image ${index}`,
+    Description: ai_description || '',
+    'XPTitle': subfolder_title || '',
+    'XPComment': ai_description || '',
+  };
 
-    // Embed metadata
-    await ep.open();
-    await ep.writeMetadata(tempPath, {
-      all: '', // clear existing tags
-      Description: `Short description: ${ai_description}`,
-      Title: subfolder_title || `Image ${index}`,
-    }, ['overwrite_original']);
-    await ep.close();
+  // Use ExifTool to embed metadata
+  const { exiftool } = require('exiftool-vendored');
+  const fs = require('fs').promises;
+  const path = require('path');
+  const tmp = require('tmp-promise');
 
-    // Read updated image back
-    const finalBuffer = fs.readFileSync(tempPath);
+  const { path: tmpPath, cleanup } = await tmp.file({ postfix: '.jpg' });
+  await fs.writeFile(tmpPath, compressedBuffer);
+  await exiftool.write(tmpPath, metadataTags);
+  const finalBuffer = await fs.readFile(tmpPath);
+  await cleanup();
 
-    // Cleanup
-    fs.unlinkSync(tempPath);
-
-    return {
-      buffer: finalBuffer,
-      filename: `Image-${index}.jpg`,
-    };
-  } catch (err) {
-    console.error(`Error processing image ${index}:`, err);
-    throw err;
-  }
-}
-
-module.exports = {
-  compressAndEmbedMetadata,
+  const filename = `Image-${index}.jpg`;
+  return { buffer: finalBuffer, filename };
 };
+
+module.exports = { compressAndEmbedMetadata };
