@@ -1,56 +1,47 @@
-const axios = require('axios');
 const sharp = require('sharp');
-const { ExiftoolProcess } = require('node-exiftool');
-const { Readable } = require('stream');
+const axios = require('axios');
+const { exiftool } = require('exiftool-vendored');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { v4: uuidv4 } = require('uuid');
 
-async function compressAndEmbedMetadata(imageData, index) {
+async function compressAndEmbedMetadata(image, index) {
   try {
-    const ep = new ExiftoolProcess();
-    await ep.open();
+    const response = await axios.get(image.url, { responseType: 'arraybuffer' });
+    const inputBuffer = Buffer.from(response.data);
 
-    const response = await axios.get(imageData.url, { responseType: 'arraybuffer' });
-    const originalBuffer = Buffer.from(response.data, 'binary');
-
-    const resizedBuffer = await sharp(originalBuffer)
+    // Resize and compress the image
+    const resizedBuffer = await sharp(inputBuffer)
       .resize({ width: 1800, withoutEnlargement: true })
-      .jpeg({ quality: 80 })
+      .jpeg({ quality: 70 })
       .toBuffer();
 
-    const filename = imageData.subfolder_title
-      ? `${imageData.subfolder_title}.jpg`
-      : `Image-${index}.jpg`;
+    // Create a temp file path
+    const tempDir = os.tmpdir();
+    const filename = `${image.subfolder || 'Image'}-${index}.jpg`;
+    const tempPath = path.join(tempDir, `${uuidv4()}.jpg`);
+    fs.writeFileSync(tempPath, resizedBuffer);
 
+    // Prepare metadata
     const metadata = {
-      Title: imageData.subfolder_title || `Image ${index}`,
-      Description: `Short description: ${imageData.ai_description || 'No description provided.'}`,
+      Title: image.subfolder || `Image ${index}`,
+      Description: `Short description: ${image.ai_description || ''}`,
     };
 
-    const input = new Readable();
-    input._read = () => {};
-    input.push(resizedBuffer);
-    input.push(null);
+    // Embed metadata using exiftool
+    await exiftool.write(tempPath, metadata);
 
-    const tempPath = `/tmp/${Date.now()}-${Math.random().toString(36).substring(2, 8)}.jpg`;
-    const imageBufferWithExif = await new Promise((resolve, reject) => {
-      const chunks = [];
-      input.pipe(sharp().toBuffer())
-        .on('data', chunk => chunks.push(chunk))
-        .on('end', async () => {
-          const completeBuffer = Buffer.concat(chunks);
-          require('fs').writeFileSync(tempPath, completeBuffer);
-          await ep.writeMetadata(tempPath, metadata, ['overwrite_original']);
-          const finalBuffer = require('fs').readFileSync(tempPath);
-          resolve(finalBuffer);
-        })
-        .on('error', reject);
-    });
+    // Read the file back into buffer
+    const finalBuffer = fs.readFileSync(tempPath);
 
-    await ep.close();
+    // Clean up temp file
+    fs.unlinkSync(tempPath);
 
-    return { buffer: imageBufferWithExif, filename };
-  } catch (error) {
-    console.error('Metadata embedding error:', error);
-    throw error;
+    return { buffer: finalBuffer, filename };
+  } catch (err) {
+    console.error('Metadata embedding error:', err);
+    throw err;
   }
 }
 
