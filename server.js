@@ -1,3 +1,4 @@
+// server.js
 const express = require('express');
 const archiver = require('archiver');
 const { compressAndEmbedMetadata } = require('./metadata-utils');
@@ -24,23 +25,20 @@ app.post('/export', async (req, res) => {
     if (!images || images.length === 0) {
       return res.status(400).json({ error: 'No images provided.' });
     }
+    if (!project) {
+      return res.status(400).json({ error: 'Missing project name.' });
+    }
 
-    // Generate safe ZIP filename from project name
-    const safeProjectName = project
-      ? project.replace(/[^a-zA-Z0-9-_]/g, '_')
-      : `project-${project_id}`;
-    const timestamp = Date.now();
-    const zipFilename = `${safeProjectName}-${timestamp}.zip`;
-
-    // Create in-memory zip stream
+    // Create in-memory zip
     const zipStream = new stream.PassThrough();
     const archive = archiver('zip', { zlib: { level: 9 } });
     archive.pipe(zipStream);
 
-    // Start upload to S3 (without ACL if Bucket Ownership is enforced)
+    // Start upload to S3 without ACL
+    const sanitizedProjectName = project.replace(/[^a-zA-Z0-9-_]/g, '_');
     const uploadParams = {
       Bucket: process.env.S3_BUCKET_NAME,
-      Key: `project-exports/${zipFilename}`,
+      Key: `project-exports/${sanitizedProjectName}-${Date.now()}.zip`,
       Body: zipStream,
       ContentType: 'application/zip',
     };
@@ -48,16 +46,18 @@ app.post('/export', async (req, res) => {
 
     // Add images to archive
     for (let i = 0; i < images.length; i++) {
-      const { buffer, filename } = await compressAndEmbedMetadata(images[i], i + 1);
+      const image = images[i];
+      if (!image || !image.image_url) {
+        throw new Error(`Missing image_url for image index ${i}`);
+      }
+
+      const { buffer, filename } = await compressAndEmbedMetadata(image, i + 1);
       archive.append(buffer, { name: filename });
     }
 
     archive.finalize();
-
-    // Wait for S3 upload to finish
     const s3Result = await s3Upload;
 
-    // Return public URL
     res.json({ download_url: s3Result.Location });
   } catch (err) {
     console.error('Export error:', err);
