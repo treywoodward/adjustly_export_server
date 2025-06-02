@@ -57,8 +57,8 @@ app.post('/export', async (req, res) => {
     // Add images to archive
     for (let i = 0; i < images.length; i++) {
       const image = images[i];
-      if (!image || !image.image_url) {
-        throw new Error(`Missing image_url for image index ${i}`);
+      if (!image || !image.public_url) {
+        throw new Error(`Missing public_url_url for image index ${i}`);
       }
 
       const { buffer, filename } = await compressAndEmbedMetadata(image, i + 1);
