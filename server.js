@@ -20,7 +20,17 @@ const s3 = new AWS.S3();
 
 app.post('/export', async (req, res) => {
   try {
-    const { project_id, project, images } = req.body;
+    const { project_id, project } = req.body;
+    let { images } = req.body;
+
+    // Parse images from JSON string if necessary
+    if (typeof images === 'string') {
+      try {
+        images = JSON.parse(images);
+      } catch (parseErr) {
+        return res.status(400).json({ error: 'Invalid JSON in images field.' });
+      }
+    }
 
     if (!images || images.length === 0) {
       return res.status(400).json({ error: 'No images provided.' });
