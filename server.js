@@ -20,15 +20,18 @@ const s3 = new AWS.S3();
 
 app.post('/export', async (req, res) => {
   try {
-    const { project_id, project } = req.body;
-    let { images } = req.body;
+    let { project_id, project, images } = req.body;
 
-    // Parse images from JSON string if necessary
+    // DEBUG: log full incoming payload
+    console.log('Received payload:', req.body);
+
+    // Handle if images comes in as a string from Bubble
     if (typeof images === 'string') {
       try {
         images = JSON.parse(images);
-      } catch (parseErr) {
-        return res.status(400).json({ error: 'Invalid JSON in images field.' });
+      } catch (err) {
+        console.error('Failed to parse images JSON:', err.message);
+        return res.status(400).json({ error: 'Invalid JSON in images parameter.' });
       }
     }
 
@@ -58,7 +61,7 @@ app.post('/export', async (req, res) => {
     for (let i = 0; i < images.length; i++) {
       const image = images[i];
       if (!image || !image.public_url) {
-        throw new Error(`Missing public_url_url for image index ${i}`);
+        throw new Error(`Missing public_url for image index ${i}`);
       }
 
       const { buffer, filename } = await compressAndEmbedMetadata(image, i + 1);
