@@ -58,25 +58,32 @@ app.post('/export', async (req, res) => {
 
     const s3Upload = s3.upload(uploadParams).promise();
 
-    // ✅ Process all images in parallel, wait before finalizing
-    await Promise.all(images.map(async (image, index) => {
+    // ✅ Process and append each image sequentially
+    for (let i = 0; i < images.length; i++) {
+      const image = images[i];
       const { public_url, subfolder_title, ai_description } = image;
 
       if (!public_url) {
-        throw new Error(`Missing public_url for image at index ${index}`);
+        throw new Error(`Missing public_url for image at index ${i}`);
       }
 
-      console.log(`Processing image ${index + 1}: ${public_url}`);
+      console.log(`Processing image ${i + 1}: ${public_url}`);
 
-      const { buffer, filename } = await compressAndEmbedMetadata(
-        { image_url: public_url, subfolder_title, ai_description },
-        index + 1
-      );
+      try {
+        const { buffer, filename } = await compressAndEmbedMetadata(
+          { image_url: public_url, subfolder_title, ai_description },
+          i + 1
+        );
 
-      archive.append(buffer, { name: filename });
-    }));
+        archive.append(buffer, { name: filename });
+      } catch (err) {
+        console.error(`Failed to process image ${i + 1}: ${err.message}`);
+        throw err;
+      }
+    }
 
-    await archive.finalize();
+    // ✅ Finalize only after all images are appended
+    archive.finalize();
     const s3Result = await s3Upload;
 
     console.log('Export successful:', s3Result.Location);
