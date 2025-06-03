@@ -18,17 +18,16 @@ AWS.config.update({
 const s3 = new AWS.S3();
 
 app.post('/export', async (req, res) => {
-  const getStream = (await import('get-stream')).default;
-
   try {
     let { project_id, project, images } = req.body;
 
     console.log('==== RAW BODY START ====');
     console.log('project_id:', project_id);
     console.log('project:', project);
-    console.log('images:', JSON.stringify(images, null, 2));
+    console.log('images:', images);
     console.log('==== RAW BODY END ====');
 
+    // Parse if images is string
     if (typeof images === 'string') {
       try {
         images = JSON.parse(images);
@@ -46,25 +45,30 @@ app.post('/export', async (req, res) => {
       return res.status(400).json({ error: 'Missing project name.' });
     }
 
-    // Create zip and stream to S3
     const zipStream = new stream.PassThrough();
     const archive = archiver('zip', { zlib: { level: 9 } });
     archive.pipe(zipStream);
 
     const sanitizedProjectName = project.replace(/[^a-zA-Z0-9-_]/g, '_');
-    const s3Upload = s3.upload({
+    const uploadParams = {
       Bucket: process.env.S3_BUCKET_NAME,
       Key: `project-exports/${sanitizedProjectName}-${Date.now()}.zip`,
       Body: zipStream,
       ContentType: 'application/zip',
-    }).promise();
+    };
+
+    const s3Upload = s3.upload(uploadParams).promise();
+
+    // Track filenames to prevent overwrites
+    const filenameCount = {};
 
     for (let i = 0; i < images.length; i++) {
       const image = images[i];
       const { public_url, subfolder_title, ai_description } = image;
 
       if (!public_url) {
-        throw new Error(`Missing public_url for image at index ${i}`);
+        console.warn(`Skipping image ${i + 1}: Missing public_url`);
+        continue;
       }
 
       console.log(`Processing image ${i + 1}: ${public_url}`);
@@ -74,10 +78,20 @@ app.post('/export', async (req, res) => {
         i + 1
       );
 
-      archive.append(buffer, { name: filename });
+      let uniqueFilename = filename;
+      if (filenameCount[filename]) {
+        filenameCount[filename]++;
+        const ext = filename.split('.').pop();
+        const base = filename.replace(`.${ext}`, '');
+        uniqueFilename = `${base}_${filenameCount[filename]}.${ext}`;
+      } else {
+        filenameCount[filename] = 1;
+      }
+
+      archive.append(buffer, { name: uniqueFilename });
     }
 
-    await archive.finalize();
+    archive.finalize();
     const s3Result = await s3Upload;
 
     console.log('Export successful:', s3Result.Location);
