@@ -29,6 +29,7 @@ app.post('/export', async (req, res) => {
       try {
         images = JSON.parse(images);
       } catch (err) {
+        console.error('Failed to parse images JSON:', err.message);
         return res.status(400).json({ error: 'Invalid JSON in images parameter.' });
       }
     }
@@ -46,39 +47,38 @@ app.post('/export', async (req, res) => {
     archive.pipe(zipStream);
 
     const sanitizedProjectName = project.replace(/[^a-zA-Z0-9-_]/g, '_');
+    const s3Key = `project-exports/${sanitizedProjectName}-${Date.now()}.zip`;
+
     const uploadParams = {
       Bucket: process.env.S3_BUCKET_NAME,
-      Key: `project-exports/${sanitizedProjectName}-${Date.now()}.zip`,
+      Key: s3Key,
       Body: zipStream,
       ContentType: 'application/zip',
     };
+
     const s3Upload = s3.upload(uploadParams).promise();
 
-    // ✅ Collect buffers in parallel
-    const processedImages = await Promise.all(images.map(async (image, i) => {
+    // ✅ Process all images in parallel, wait before finalizing
+    await Promise.all(images.map(async (image, index) => {
       const { public_url, subfolder_title, ai_description } = image;
+
       if (!public_url) {
-        throw new Error(`Missing public_url for image at index ${i}`);
+        throw new Error(`Missing public_url for image at index ${index}`);
       }
 
-      console.log(`Processing image ${i + 1}: ${public_url}`);
+      console.log(`Processing image ${index + 1}: ${public_url}`);
 
       const { buffer, filename } = await compressAndEmbedMetadata(
         { image_url: public_url, subfolder_title, ai_description },
-        i + 1
+        index + 1
       );
 
-      return { buffer, filename };
+      archive.append(buffer, { name: filename });
     }));
 
-    // ✅ Append files after all processing is done
-    for (const { buffer, filename } of processedImages) {
-      archive.append(buffer, { name: filename });
-    }
-
-    archive.finalize(); // zip will now complete correctly
-
+    await archive.finalize();
     const s3Result = await s3Upload;
+
     console.log('Export successful:', s3Result.Location);
     res.json({ download_url: s3Result.Location });
   } catch (err) {
