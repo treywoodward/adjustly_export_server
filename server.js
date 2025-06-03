@@ -3,13 +3,14 @@ const archiver = require('archiver');
 const { compressAndEmbedMetadata } = require('./metadata-utils');
 const AWS = require('aws-sdk');
 const stream = require('stream');
+const getStream = require('get-stream');
 require('dotenv').config();
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Configure AWS
+// AWS config
 AWS.config.update({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
@@ -21,17 +22,8 @@ app.post('/export', async (req, res) => {
   try {
     let { project_id, project, images } = req.body;
 
-    console.log('==== RAW BODY START ====');
-    console.log(JSON.stringify(req.body, null, 2));
-    console.log('==== RAW BODY END ====');
-
     if (typeof images === 'string') {
-      try {
-        images = JSON.parse(images);
-      } catch (err) {
-        console.error('Failed to parse images JSON:', err.message);
-        return res.status(400).json({ error: 'Invalid JSON in images parameter.' });
-      }
+      images = JSON.parse(images);
     }
 
     if (!images || !Array.isArray(images) || images.length === 0) {
@@ -42,54 +34,43 @@ app.post('/export', async (req, res) => {
       return res.status(400).json({ error: 'Missing project name.' });
     }
 
-    const zipStream = new stream.PassThrough();
+    const archiveStream = new stream.PassThrough();
     const archive = archiver('zip', { zlib: { level: 9 } });
-    archive.pipe(zipStream);
+    archive.pipe(archiveStream);
 
     const sanitizedProjectName = project.replace(/[^a-zA-Z0-9-_]/g, '_');
     const s3Key = `project-exports/${sanitizedProjectName}-${Date.now()}.zip`;
 
-    const uploadParams = {
-      Bucket: process.env.S3_BUCKET_NAME,
-      Key: s3Key,
-      Body: zipStream,
-      ContentType: 'application/zip',
-    };
-
-    const s3Upload = s3.upload(uploadParams).promise();
-
-    // ✅ Process and append each image sequentially
+    // ✅ Process all images and append
     for (let i = 0; i < images.length; i++) {
-      const image = images[i];
-      const { public_url, subfolder_title, ai_description } = image;
+      const { public_url, subfolder_title, ai_description } = images[i];
+      const { buffer, filename } = await compressAndEmbedMetadata(
+        { image_url: public_url, subfolder_title, ai_description },
+        i + 1
+      );
 
-      if (!public_url) {
-        throw new Error(`Missing public_url for image at index ${i}`);
-      }
-
-      console.log(`Processing image ${i + 1}: ${public_url}`);
-
-      try {
-        const { buffer, filename } = await compressAndEmbedMetadata(
-          { image_url: public_url, subfolder_title, ai_description },
-          i + 1
-        );
-
-        archive.append(buffer, { name: filename });
-      } catch (err) {
-        console.error(`Failed to process image ${i + 1}: ${err.message}`);
-        throw err;
-      }
+      archive.append(buffer, { name: filename });
     }
 
-    // ✅ Finalize only after all images are appended
     archive.finalize();
-    const s3Result = await s3Upload;
 
-    console.log('Export successful:', s3Result.Location);
-    res.json({ download_url: s3Result.Location });
+    // ✅ Wait until archive is fully written to buffer
+    const zipBuffer = await getStream.buffer(archiveStream);
+
+    // ✅ Now upload the buffer to S3
+    const uploadResult = await s3
+      .upload({
+        Bucket: process.env.S3_BUCKET_NAME,
+        Key: s3Key,
+        Body: zipBuffer,
+        ContentType: 'application/zip',
+      })
+      .promise();
+
+    console.log('Export successful:', uploadResult.Location);
+    res.json({ download_url: uploadResult.Location });
   } catch (err) {
-    console.error('Export error:', err.message);
+    console.error('Export error:', err);
     res.status(500).json({ error: 'Export failed. Check server logs for details.' });
   }
 });
