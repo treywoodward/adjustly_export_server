@@ -18,27 +18,35 @@ AWS.config.update({
 const s3 = new AWS.S3();
 
 app.post('/export', async (req, res) => {
+  console.log('---- RAW BODY START ----');
+  console.log(req.body);
+  console.log('---- RAW BODY END ----');
+
   try {
     let { project_id, project, images } = req.body;
 
-    console.log('Received payload:', req.body);
-
-    // If images is a string (Bubble sometimes does this), parse it
+    // Handle edge case: Bubble sometimes sends JSON as a string
     if (typeof images === 'string') {
       try {
         images = JSON.parse(images);
+        console.log('Parsed `images` from string.');
       } catch (err) {
-        console.error('Failed to parse images JSON:', err.message);
-        return res.status(400).json({ error: 'Invalid JSON in images parameter.' });
+        console.error('Failed to parse `images` JSON string:', err.message);
+        return res.status(400).json({ error: 'Invalid JSON in `images` parameter.' });
       }
     }
 
-    if (!images || !Array.isArray(images) || images.length === 0) {
-      return res.status(400).json({ error: 'No valid images provided.' });
+    // Validation
+    if (!project_id || typeof project_id !== 'string') {
+      return res.status(400).json({ error: 'Missing or invalid project_id.' });
     }
 
-    if (!project) {
-      return res.status(400).json({ error: 'Missing project name.' });
+    if (!project || typeof project !== 'string') {
+      return res.status(400).json({ error: 'Missing or invalid project name.' });
+    }
+
+    if (!Array.isArray(images) || images.length === 0) {
+      return res.status(400).json({ error: 'No valid images provided.' });
     }
 
     // Setup zip stream
@@ -46,7 +54,7 @@ app.post('/export', async (req, res) => {
     const archive = archiver('zip', { zlib: { level: 9 } });
     archive.pipe(zipStream);
 
-    // S3 upload config
+    // Setup S3 upload
     const sanitizedProjectName = project.replace(/[^a-zA-Z0-9-_]/g, '_');
     const uploadParams = {
       Bucket: process.env.S3_BUCKET_NAME,
@@ -54,7 +62,6 @@ app.post('/export', async (req, res) => {
       Body: zipStream,
       ContentType: 'application/zip',
     };
-
     const s3Upload = s3.upload(uploadParams).promise();
 
     // Process each image
@@ -62,8 +69,8 @@ app.post('/export', async (req, res) => {
       const image = images[i];
       const { public_url, subfolder_title, ai_description } = image;
 
-      if (!public_url) {
-        throw new Error(`Missing public_url for image at index ${i}`);
+      if (!public_url || typeof public_url !== 'string') {
+        throw new Error(`Missing or invalid public_url for image at index ${i}`);
       }
 
       console.log(`Processing image ${i + 1}: ${public_url}`);
@@ -82,8 +89,8 @@ app.post('/export', async (req, res) => {
     console.log('Export successful:', s3Result.Location);
     res.json({ download_url: s3Result.Location });
   } catch (err) {
-    console.error('Export error:', err.message);
-    res.status(500).json({ error: 'Export failed. Check server logs.' });
+    console.error('Export error:', err);
+    res.status(500).json({ error: 'Export failed. Check server logs for details.' });
   }
 });
 
