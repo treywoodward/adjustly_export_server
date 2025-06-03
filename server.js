@@ -1,4 +1,3 @@
-// server.js
 const express = require('express');
 const archiver = require('archiver');
 const { compressAndEmbedMetadata } = require('./metadata-utils');
@@ -22,10 +21,9 @@ app.post('/export', async (req, res) => {
   try {
     let { project_id, project, images } = req.body;
 
-    // DEBUG: log full incoming payload
     console.log('Received payload:', req.body);
 
-    // Handle if images comes in as a string from Bubble
+    // If images is a string (Bubble sometimes does this), parse it
     if (typeof images === 'string') {
       try {
         images = JSON.parse(images);
@@ -35,19 +33,20 @@ app.post('/export', async (req, res) => {
       }
     }
 
-    if (!images || images.length === 0) {
-      return res.status(400).json({ error: 'No images provided.' });
+    if (!images || !Array.isArray(images) || images.length === 0) {
+      return res.status(400).json({ error: 'No valid images provided.' });
     }
+
     if (!project) {
       return res.status(400).json({ error: 'Missing project name.' });
     }
 
-    // Create in-memory zip
+    // Setup zip stream
     const zipStream = new stream.PassThrough();
     const archive = archiver('zip', { zlib: { level: 9 } });
     archive.pipe(zipStream);
 
-    // Start upload to S3 without ACL
+    // S3 upload config
     const sanitizedProjectName = project.replace(/[^a-zA-Z0-9-_]/g, '_');
     const uploadParams = {
       Bucket: process.env.S3_BUCKET_NAME,
@@ -55,25 +54,35 @@ app.post('/export', async (req, res) => {
       Body: zipStream,
       ContentType: 'application/zip',
     };
+
     const s3Upload = s3.upload(uploadParams).promise();
 
-    // Add images to archive
+    // Process each image
     for (let i = 0; i < images.length; i++) {
       const image = images[i];
-      if (!image || !image.public_url) {
-        throw new Error(`Missing public_url for image index ${i}`);
+      const { public_url, subfolder_title, ai_description } = image;
+
+      if (!public_url) {
+        throw new Error(`Missing public_url for image at index ${i}`);
       }
 
-      const { buffer, filename } = await compressAndEmbedMetadata(image, i + 1);
+      console.log(`Processing image ${i + 1}: ${public_url}`);
+
+      const { buffer, filename } = await compressAndEmbedMetadata(
+        { image_url: public_url, subfolder_title, ai_description },
+        i + 1
+      );
+
       archive.append(buffer, { name: filename });
     }
 
     archive.finalize();
     const s3Result = await s3Upload;
 
+    console.log('Export successful:', s3Result.Location);
     res.json({ download_url: s3Result.Location });
   } catch (err) {
-    console.error('Export error:', err);
+    console.error('Export error:', err.message);
     res.status(500).json({ error: 'Export failed. Check server logs.' });
   }
 });
